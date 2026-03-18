@@ -1,101 +1,162 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import sqlite3
+import os
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-# Esto debe ir al principio. Configura el título de la pestaña y el layout.
+# --- CONFIGURACIÓN DE PÁGINA Y CSS ---
 st.set_page_config(page_title="EcoTecho Educativo", page_icon="🌱", layout="wide")
 
-# --- CSS PERSONALIZADO ---
-# Inyectamos un poco de CSS para intentar igualar tu paleta de colores
 st.markdown("""
     <style>
-    /* Color de fondo de la barra lateral */
     [data-testid="stSidebar"] {
         background-color: #2b303b;
         color: white;
     }
-    /* Estilo del título de la barra lateral */
     .sidebar-title {
-        color: #4CAF50; /* Verde EcoTecho */
+        color: #4CAF50;
         font-size: 24px;
         font-weight: bold;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CARGA DE MODELOS ---
-# Carga los modelos que exportaste desde tu notebook
-try:
-    modelo_rl_supervivencia = joblib.load('modelo_rl_sobrevivencia.pkl')
-    modelo_rf_consumo = joblib.load('modelo_rf_consumo.pkl')
-except FileNotFoundError:
-    st.error("No se encontraron los modelos. Asegúrate de haber ejecutado joblib.dump() en tu notebook y que los archivos .pkl estén en la misma carpeta.")
+# --- INICIALIZACIÓN DE LA BASE DE DATOS ---
+def inicializar_bd():
+    """Crea la base de datos SQLite a partir de los archivos .sql si no existe."""
+    if not os.path.exists('base_conocimiento.db'):
+        conn = sqlite3.connect('base_conocimiento.db')
+        cursor = conn.cursor()
+        
+        # Lista de tus archivos SQL
+        archivos_sql = [
+            'estructura_techo_verde.sql', 
+            'especies_vegetales.sql', 
+            'infraestructura_vegetada_2023.sql'
+        ]
+        
+        for archivo in archivos_sql:
+            if os.path.exists(archivo):
+                with open(archivo, 'r', encoding='utf-8') as f:
+                    script_sql = f.read()
+                    try:
+                        cursor.executescript(script_sql)
+                    except Exception as e:
+                        print(f"Nota: Hubo un detalle cargando {archivo}: {e}")
+        conn.commit()
+        conn.close()
 
-# --- BARRA LATERAL (Sidebar) ---
+# Ejecutar la inicialización silenciosamente
+inicializar_bd()
+
+# --- CARGA DE MODELOS ---
+@st.cache_resource
+def cargar_modelos():
+    try:
+        rl = joblib.load('modelo_rl_sobrevivencia.pkl')
+        rf = joblib.load('modelo_rf_sobrevivencia.pkl')
+        return rl, rf
+    except Exception:
+        return None, None
+
+modelo_rl, modelo_rf = cargar_modelos()
+
+# --- MOTOR DE BÚSQUEDA EN BASE DE DATOS ---
+def buscar_en_bd(consulta):
+    conn = sqlite3.connect('base_conocimiento.db')
+    cursor = conn.cursor()
+    consulta = consulta.lower()
+    respuesta = ""
+    
+    try:
+        if "norma" in consulta or "requisito" in consulta:
+            cursor.execute("SELECT descripcion, aplica_a FROM normativas LIMIT 5")
+            resultados = cursor.fetchall()
+            if resultados:
+                respuesta += "📚 **Normativas y Requisitos aplicables:**\n"
+                for desc, aplica in resultados:
+                    respuesta += f"- {desc} (Aplica a: {aplica})\n"
+                    
+        elif "riego" in consulta or "sustrato" in consulta or "especie" in consulta:
+            cursor.execute("SELECT nombre_cientifico, riego_requerido, sustrato_recomendado FROM especies_vegetales WHERE nombre_cientifico != '' LIMIT 5")
+            resultados = cursor.fetchall()
+            if resultados:
+                respuesta += "🌿 **Recomendaciones de cuidado (Ejemplos de la BD):**\n"
+                for nombre, riego, sustrato in resultados:
+                    respuesta += f"**{nombre}**\n- Riego: {riego}\n- Sustrato: {sustrato}\n\n"
+                    
+        elif "qué es" in consulta or "definición" in consulta or "jardín vertical" in consulta:
+            # Busca tanto en terminos como en definiciones
+            cursor.execute("SELECT termino, definicion FROM definiciones LIMIT 3")
+            resultados = cursor.fetchall()
+            if resultados:
+                respuesta += "📖 **Glosario Técnico:**\n"
+                for termino, definicion in resultados:
+                    respuesta += f"- **{termino}:** {definicion}\n"
+    except Exception as e:
+        pass # Falla silenciosa si una tabla no existe
+    finally:
+        conn.close()
+        
+    return respuesta
+
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.markdown('<p class="sidebar-title">🌱 EcoTecho Educativo</p>', unsafe_allow_html=True)
-    st.write("Asistente especializado en sostenibilidad de techos verdes para instituciones educativas. Base de datos con 381 especies vegetales.")
-    
+    st.write("Asistente especializado en sostenibilidad de techos verdes para instituciones educativas.")
     st.divider()
-    
-    # Acordeones para replicar tu menú izquierdo
     with st.expander("📚 Consultas disponibles"):
-        st.write("- Predicción de supervivencia\n- Consumo de agua\n- Información de especies")
-        
+        st.write("- Predicción de supervivencia\n- Información de normativas\n- Fichas de especies")
     with st.expander("💡 Ejemplos de consultas"):
-        st.write('Prueba preguntar: *"Predice la supervivencia de la especie 1 en el día 50 usando Random Forest."*')
-        
-    with st.expander("🌿 Especies destacadas"):
-        st.write("1. Ajuga reptans\n2. Sendum\n3. Greenovia\n4. Ramilletes")
-        
-    with st.expander("❓ Preguntas frecuentes"):
-        st.write("**¿De dónde provienen los datos?**\nDe estudios de adaptación de especies en Bogotá.")
+        st.write('*"Predice la supervivencia de la especie 1 en el día 50"*')
+        st.write('*"¿Qué normativas aplican?"*')
+        st.write('*"¿Cuál es el riego para las especies?"*')
 
-# --- ÁREA PRINCIPAL (Chat) ---
+# --- ÁREA DE CHAT ---
 st.header("Asistente de Sostenibilidad")
-st.caption("Pregúntame sobre especies vegetales, sistemas de techos verdes y jardines verticales")
 
-# Inicializar historial del chat
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "¡Hola! Soy tu asistente especializado en techos verdes sostenibles para entornos educativos. Tengo información detallada sobre 381 especies vegetales, sistemas de techos verdes, jardines verticales y requisitos técnicos según normativa colombiana. ¿En qué puedo ayudarte hoy?"}
-    ]
+    st.session_state.messages = [{"role": "assistant", "content": "¡Hola! Soy tu asistente sobre techos verdes. Puedo predecir la supervivencia de especies o consultar normativas y cuidados. ¿En qué te ayudo hoy?"}]
 
-# Mostrar historial del chat
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Entrada del usuario
-prompt = st.chat_input("Ejemplo: ¿Qué especies son resistentes a sequía?")
+prompt = st.chat_input("Escribe tu consulta aquí...")
 
 if prompt:
-    # 1. Mostrar y guardar el mensaje del usuario
+    # 1. Guardar y mostrar mensaje del usuario
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # 2. Lógica MUY BÁSICA para detectar qué quiere el usuario
-    # Idealmente, aquí conectarías con un LLM o usarías expresiones regulares (Regex) para extraer los números.
-    # Por ahora, haremos una prueba con palabras clave.
-    respuesta = "No entendí muy bien tu consulta. Intenta preguntar por la predicción de la especie 1 en el día 50."
-    
-    if "supervivencia" in prompt.lower() and "especie 1" in prompt.lower():
-        especie = 1
-        dia = 50 # Valor por defecto para la prueba
-        
-        # Preparar datos para el modelo (igual que en tu notebook)
-        input_data = pd.DataFrame([[especie, dia]], columns=['especies', 'dia_1'])
-        
-        if "random forest" in prompt.lower():
-            prediccion = modelo_rf_supervivencia.predict(input_data)[0]
-            respuesta = f"🌿 **Predicción Random Forest:** La supervivencia para la especie {especie} en el día {dia} es de **{prediccion:.2f}**."
-        else:
-            prediccion = modelo_rl_supervivencia.predict(input_data)[0][0]
-            respuesta = f"📈 **Predicción Regresión Lineal:** La supervivencia para la especie {especie} en el día {dia} es de **{prediccion:.2f}**."
+    respuesta_bot = ""
 
-    # 3. Mostrar y guardar la respuesta del asistente
+    # 2. Lógica de Enrutamiento Inteligente
+    if "predic" in prompt.lower() or "supervivencia" in prompt.lower():
+        if modelo_rl is not None and modelo_rf is not None:
+            # Simulamos la extracción de especie 1, día 50 (puedes mejorarlo con Regex después)
+            especie, dia = 1, 50 
+            input_data = pd.DataFrame([[especie, dia]], columns=['especies', 'dia_1'])
+            
+            if "random forest" in prompt.lower():
+                prediccion = modelo_rf.predict(input_data)[0]
+                respuesta_bot = f"🌿 **Random Forest:** La supervivencia para la especie {especie} en el día {dia} es de **{prediccion:.2f}**."
+            else:
+                prediccion = modelo_rl.predict(input_data)[0][0]
+                respuesta_bot = f"📈 **Regresión Lineal:** La supervivencia para la especie {especie} en el día {dia} es de **{prediccion:.2f}**."
+        else:
+            respuesta_bot = "⚠️ Los modelos predictivos no están cargados. Revisa los archivos .pkl."
+            
+    else:
+        # Consulta a las bases de datos SQL
+        resultado_sql = buscar_en_bd(prompt)
+        if resultado_sql:
+            respuesta_bot = resultado_sql
+        else:
+            respuesta_bot = "No encontré información específica sobre eso. Prueba preguntando por **normativas**, **riego**, **definiciones** o pide una **predicción**."
+
+    # 3. Mostrar y guardar respuesta del bot
     with st.chat_message("assistant"):
-        st.markdown(respuesta)
-    st.session_state.messages.append({"role": "assistant", "content": respuesta})
+        st.markdown(respuesta_bot)
+    st.session_state.messages.append({"role": "assistant", "content": respuesta_bot})
