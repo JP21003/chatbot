@@ -2,5 +2,4 @@ streamlit
 pandas
 scikit-learn
 joblib
-sqlite3
 google-generativeai
