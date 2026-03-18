@@ -21,7 +21,7 @@ llm_activado = False
 try:
     # Configura la API Key. En Streamlit Cloud se configura en la sección "Secrets"
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    llm_model = genai.GenerativeModel('gemini-1.5-flash')
+    llm_model = genai.GenerativeModel('gemini-pro')
     llm_activado = True
 except Exception:
     st.sidebar.warning("⚠️ Modelo de lenguaje (Gemini) no configurado. Faltan las API Keys. Se usarán respuestas básicas.")
